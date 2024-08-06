@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { uploadFile, listFiles, downloadFile, deleteFile } from '@/lib/discord-storage';
 import FileUploader from '@/components/FileUploader';
 import FileList from '@/components/FileList';
@@ -19,21 +19,7 @@ export default function Home() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const { toast } = useToast();
 
-  useEffect(() => {
-    // Retrieve saved values from local storage
-    const savedBotToken = localStorage.getItem('discordBotToken');
-    const savedChannelId = localStorage.getItem('discordChannelId');
-    
-    if (savedBotToken) setBotToken(savedBotToken);
-    if (savedChannelId) setChannelId(savedChannelId);
-    
-    // If both values are present, fetch files
-    if (savedBotToken && savedChannelId) {
-      fetchFiles(savedBotToken, savedChannelId);
-    }
-  }, []);
-
-  const fetchFiles = async (token = botToken, channel = channelId) => {
+  const fetchFiles = useCallback(async (token = botToken, channel = channelId) => {
     if (!token || !channel) return;
     
     try {
@@ -50,7 +36,21 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [botToken, channelId, toast]);
+
+  useEffect(() => {
+    // Retrieve saved values from local storage
+    const savedBotToken = localStorage.getItem('discordBotToken');
+    const savedChannelId = localStorage.getItem('discordChannelId');
+    
+    if (savedBotToken) setBotToken(savedBotToken);
+    if (savedChannelId) setChannelId(savedChannelId);
+    
+    // If both values are present, fetch files
+    if (savedBotToken && savedChannelId) {
+      fetchFiles(savedBotToken, savedChannelId);
+    }
+  }, [fetchFiles]);
 
   const handleUpload = async (file) => {
     try {
