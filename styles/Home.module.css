@@ -1,0 +1,15 @@
+.container {
+  padding: 2rem;
+  max-width: 800px;
+  margin: auto;
+}
+
+.fileUpload, .fileList {
+  margin-bottom: 2rem;
+}
+
+.fileItem {
+  border: 1px solid #ccc;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
