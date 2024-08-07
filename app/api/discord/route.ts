@@ -8,10 +8,6 @@ async function handleDiscordRequest(request: NextRequest, method: 'GET' | 'POST'
   const endpoint = searchParams.get('endpoint');
   const botToken = request.headers.get('X-Discord-Bot-Token');
 
-  if (!botToken) {
-    return NextResponse.json({ error: 'Discord bot token not provided' }, { status: 400 });
-  }
-
   try {
     if (endpoint === '/fetchFile') {
       const fileUrl = searchParams.get('url');
