@@ -10,10 +10,19 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/use-toast';
 import { Progress } from '@/components/ui/Progress';
 
+// Rename the interface to avoid conflicts with the built-in File type
+interface StoredFile {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  chunks: number;
+}
+
 export default function Home() {
   const [botToken, setBotToken] = useState('');
   const [channelId, setChannelId] = useState('');
-  const [files, setFiles] = useState([]);
+  const [files, setFiles] = useState<StoredFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -25,12 +34,12 @@ export default function Home() {
     try {
       setLoading(true);
       const fetchedFiles = await listFiles(channel, token);
-      setFiles(fetchedFiles);
+      setFiles(fetchedFiles as StoredFile[]);
     } catch (err) {
       console.error('Error fetching files:', err);
       toast({
         title: 'Error',
-        description: `Failed to fetch files: ${err.message}`,
+        description: `Failed to fetch files: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'destructive',
       });
     } finally {
@@ -39,20 +48,18 @@ export default function Home() {
   }, [botToken, channelId, toast]);
 
   useEffect(() => {
-    // Retrieve saved values from local storage
     const savedBotToken = localStorage.getItem('discordBotToken');
     const savedChannelId = localStorage.getItem('discordChannelId');
     
     if (savedBotToken) setBotToken(savedBotToken);
     if (savedChannelId) setChannelId(savedChannelId);
     
-    // If both values are present, fetch files
     if (savedBotToken && savedChannelId) {
       fetchFiles(savedBotToken, savedChannelId);
     }
   }, [fetchFiles]);
 
-  const handleUpload = async (file) => {
+  const handleUpload = async (file: File) => {
     try {
       setLoading(true);
       setUploadProgress(0);
@@ -68,7 +75,7 @@ export default function Home() {
       console.error('Error uploading file:', err);
       toast({
         title: 'Error',
-        description: `Failed to upload file: ${err.message}`,
+        description: `Failed to upload file: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'destructive',
       });
     } finally {
@@ -103,7 +110,7 @@ export default function Home() {
       console.error('Error downloading file:', err);
       toast({
         title: 'Error',
-        description: `Failed to download file: ${err.message}`,
+        description: `Failed to download file: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'destructive',
       });
     } finally {
@@ -125,7 +132,7 @@ export default function Home() {
       console.error('Error deleting file:', err);
       toast({
         title: 'Error',
-        description: `Failed to delete file: ${err.message}`,
+        description: `Failed to delete file: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'destructive',
       });
     } finally {
@@ -135,7 +142,6 @@ export default function Home() {
 
   const handleCredentialsSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Save to local storage
     localStorage.setItem('discordBotToken', botToken);
     localStorage.setItem('discordChannelId', channelId);
     fetchFiles();

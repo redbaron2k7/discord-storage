@@ -14,17 +14,30 @@ export default function FileUploader({ onUpload, disabled = false }: FileUploade
     const fileInputRef = useRef<HTMLInputElement>(null)
 
     const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            setFile(e.target.files[0])
+        const files = e.target.files
+        if (files && files.length > 0) {
+            setFile(files[0])
         }
     }
 
     const handleUpload = async () => {
         if (file) {
-            await onUpload(file)
-            setFile(null)
-            if (fileInputRef.current) {
-                fileInputRef.current.value = ''
+            try {
+                await onUpload(file)
+                setFile(null)
+                if (fileInputRef.current) {
+                    fileInputRef.current.value = ''
+                }
+                toast({
+                    title: 'Success',
+                    description: 'File uploaded successfully.',
+                })
+            } catch (err) {
+                toast({
+                    title: 'Error',
+                    description: `Failed to upload file: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                    variant: 'destructive',
+                })
             }
         }
     }
