@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/use-toast';
 import { Progress } from '@/components/ui/progress';
+import { HelpButton } from '@/components/HelpButton';
 
 interface StoredFile {
   id: string;
@@ -28,6 +29,41 @@ export default function Home() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [shareCode, setShareCode] = useState('');
   const { toast } = useToast();
+
+  const [simulatedUploadProgress, setSimulatedUploadProgress] = useState(0);
+  const [simulatedDownloadProgress, setSimulatedDownloadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isUploading) {
+      interval = setInterval(() => {
+        setSimulatedUploadProgress(prev => {
+          const target = uploadProgress;
+          const diff = target - prev;
+          const increment = diff > 0 ? Math.max(0.1, diff * 0.1) : 0.1;
+          return Math.min(prev + increment, 100);
+        });
+      }, 100);
+    }
+    return () => clearInterval(interval);
+  }, [isUploading, uploadProgress]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isDownloading) {
+      interval = setInterval(() => {
+        setSimulatedDownloadProgress(prev => {
+          const target = downloadProgress;
+          const diff = target - prev;
+          const increment = diff > 0 ? Math.max(0.1, diff * 0.1) : 0.1;
+          return Math.min(prev + increment, 100);
+        });
+      }, 100);
+    }
+    return () => clearInterval(interval);
+  }, [isDownloading, downloadProgress]);
 
   const fetchFiles = useCallback(async (token = botToken, channel = channelId) => {
     if (!token || !channel) return;
@@ -66,8 +102,9 @@ export default function Home() {
 
   const handleUpload = useCallback(async (file: File) => {
     try {
-      setLoading(true);
+      setIsUploading(true);
       setUploadProgress(0);
+      setSimulatedUploadProgress(0);
       await uploadFile(file, channelId, botToken, encryptionKey, (progress) => {
         setUploadProgress(progress);
       });
@@ -84,15 +121,17 @@ export default function Home() {
         variant: 'destructive',
       });
     } finally {
-      setLoading(false);
+      setIsUploading(false);
       setUploadProgress(0);
+      setSimulatedUploadProgress(0);
     }
   }, [botToken, channelId, encryptionKey, fetchFiles, toast]);
 
   const handleDownload = useCallback(async (fileId: string, fileName: string) => {
     try {
-      setLoading(true);
+      setIsDownloading(true);
       setDownloadProgress(0);
+      setSimulatedDownloadProgress(0);
       const messages = await fetchAllMessages(channelId, botToken);
       const chunkMessages = messages.filter(msg => msg.attachments && msg.attachments.some((att: any) => att.filename.startsWith(`${fileId}_chunk_`)));
       const chunkUrls = chunkMessages.map(msg => msg.attachments[0].url);
@@ -123,8 +162,9 @@ export default function Home() {
         variant: 'destructive',
       });
     } finally {
-      setLoading(false);
+      setIsDownloading(false);
       setDownloadProgress(0);
+      setSimulatedDownloadProgress(0);
     }
   }, [botToken, channelId, encryptionKey, toast]);
 
@@ -189,6 +229,7 @@ export default function Home() {
 
       setLoading(true);
       setDownloadProgress(0);
+      setSimulatedDownloadProgress(0);
       const { blob, fileName } = await downloadFromCode(shareCode, botToken, (progress) => {
         setDownloadProgress(progress);
       });
@@ -217,6 +258,7 @@ export default function Home() {
     } finally {
       setLoading(false);
       setDownloadProgress(0);
+      setSimulatedDownloadProgress(0);
     }
   }, [shareCode, botToken, toast]);
 
@@ -232,7 +274,10 @@ export default function Home() {
       <div className="bg-card text-card-foreground rounded-lg shadow-lg p-6 mb-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold">ACStorage - Free Storage using Discord</h1>
-          <ThemeToggle />
+          <div className="flex items-center space-x-2">
+            <HelpButton />
+            <ThemeToggle />
+          </div>
         </div>
 
         <form onSubmit={handleCredentialsSubmit} className="mb-6">
@@ -263,11 +308,11 @@ export default function Home() {
         </form>
 
         <div className="mb-6">
-          <FileUploader onUpload={handleUpload} disabled={loading || !botToken || !channelId || !encryptionKey} />
-          {uploadProgress > 0 && (
+          <FileUploader onUpload={handleUpload} disabled={isUploading || isDownloading || !botToken || !channelId || !encryptionKey} />
+          {isUploading && (
             <div className="mt-2">
-              <Progress value={uploadProgress} className="w-full" />
-              <p className="text-sm text-center mt-1">{uploadProgress.toFixed(2)}% Uploaded</p>
+              <Progress value={simulatedUploadProgress} className="w-full" />
+              <p className="text-sm text-center mt-1">{simulatedUploadProgress.toFixed(2)}% Uploaded</p>
             </div>
           )}
         </div>
@@ -278,12 +323,12 @@ export default function Home() {
             onDownload={handleDownload}
             onDelete={handleDelete}
             onGenerateShareCode={handleGenerateShareCode}
-            loading={loading}
+            loading={isUploading || isDownloading}
           />
-          {downloadProgress > 0 && (
+          {isDownloading && (
             <div className="mt-2">
-              <Progress value={downloadProgress} className="w-full" />
-              <p className="text-sm text-center mt-1">{downloadProgress.toFixed(2)}% Downloaded</p>
+              <Progress value={simulatedDownloadProgress} className="w-full" />
+              <p className="text-sm text-center mt-1">{simulatedDownloadProgress.toFixed(2)}% Downloaded</p>
             </div>
           )}
         </div>

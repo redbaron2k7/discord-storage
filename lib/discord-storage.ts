@@ -1,13 +1,7 @@
 import CryptoJS from 'crypto-js';
 
 // Discord API
-async function callDiscordAPI(
-    method: 'GET' | 'POST' | 'DELETE',
-    endpoint: string,
-    botToken: string,
-    body?: any,
-    isMultipart = false
-): Promise<any> {
+async function callDiscordAPI(method: 'GET' | 'POST' | 'DELETE', endpoint: string, botToken: string, body?: any, isMultipart = false): Promise<any> {
     const url = `/api/discord?endpoint=${encodeURIComponent(endpoint)}`;
     const headers: HeadersInit = {
         'X-Discord-Bot-Token': botToken,
@@ -23,36 +17,38 @@ async function callDiscordAPI(
     };
 
     if (body && method !== 'GET') {
-        options.body = isMultipart ? (body as FormData) : JSON.stringify(body);
+        options.body = isMultipart ? body : JSON.stringify(body);
     }
 
     try {
+        console.log(`Sending ${method} request to Discord API:`, {
+            url,
+            method,
+            headers: Object.keys(headers),
+            bodyType: body instanceof FormData ? 'FormData' : typeof body
+        });
+
         const response = await fetch(url, options);
+        const responseData = await response.text();
+        let parsedData;
+        try {
+            parsedData = JSON.parse(responseData);
+        } catch {
+            parsedData = responseData;
+        }
 
         if (!response.ok) {
-            let errorMessage;
-            try {
-                const errorData = await response.json();
-                errorMessage = errorData.message || 'Unknown error';
-            } catch {
-                errorMessage = response.statusText;
-            }
             console.error('Discord API error:', {
                 status: response.status,
                 statusText: response.statusText,
-                message: errorMessage,
+                data: parsedData,
                 endpoint: endpoint,
                 method: method
             });
-            throw new Error(`HTTP error! status: ${response.status}, message: ${errorMessage}`);
+            throw new Error(`HTTP error! status: ${response.status}, message: ${parsedData.message || response.statusText}`);
         }
 
-        if (response.status === 204) {
-            return null;
-        }
-
-        const responseText = await response.text();
-        return responseText ? JSON.parse(responseText) : null;
+        return parsedData;
     } catch (error) {
         console.error('Error calling Discord API:', error);
         throw error;
@@ -98,7 +94,7 @@ export async function uploadFile(file: File, channelId: string, botToken: string
             console.log(`Chunk ${chunkIndex} encrypted, length: ${encryptedString.length}`);
 
             const formData = new FormData();
-            formData.append('file', new Blob([encryptedString]), `${fileId}_chunk_${chunkIndex}`);
+            formData.append('file', new Blob([encryptedString], { type: 'text/plain' }), `${fileId}_chunk_${chunkIndex}`);
             formData.append('content', `Chunk ${chunkIndex + 1} of ${totalChunks}`);
 
             await callDiscordAPI('POST', `/channels/${channelId}/messages`, botToken, formData, true);
@@ -107,7 +103,7 @@ export async function uploadFile(file: File, channelId: string, botToken: string
             offset += CHUNK_SIZE;
             chunkIndex++;
 
-            if (onProgress && typeof onProgress === 'function') {
+            if (onProgress) {
                 onProgress((chunkIndex / totalChunks) * 100);
             }
         }
@@ -158,9 +154,17 @@ async function bulkDeleteMessages(channelId: string, messageIds: string[], botTo
     await callDiscordAPI('POST', endpoint, botToken, { messages: messageIds });
 }
 
+async function deleteMessage(channelId: string, messageId: string, botToken: string): Promise<void> {
+    console.log(`Attempting to delete message ${messageId}`);
+    const endpoint = `/channels/${channelId}/messages/${messageId}`;
+    await callDiscordAPI('DELETE', endpoint, botToken);
+}
+
 export async function deleteFile(fileId: string, channelId: string, botToken: string): Promise<void> {
     try {
+        console.log(`Starting deletion process for file ${fileId}`);
         const messages = await fetchAllMessages(channelId, botToken);
+        console.log(`Fetched ${messages.length} messages from channel`);
 
         const metadataMessage = messages.find(msg => msg.content.startsWith(`metadata:`) && msg.content.includes(`"id":"${fileId}"`));
         if (!metadataMessage) {
@@ -168,6 +172,7 @@ export async function deleteFile(fileId: string, channelId: string, botToken: st
         }
 
         const chunkMessages = messages.filter(msg => msg.attachments && msg.attachments.some((att: any) => att.filename.startsWith(`${fileId}_chunk_`)));
+        console.log(`Found ${chunkMessages.length} chunk messages for file ${fileId}`);
 
         const messageIdsToDelete = [metadataMessage.id, ...chunkMessages.map(msg => msg.id)];
 
@@ -178,37 +183,39 @@ export async function deleteFile(fileId: string, channelId: string, botToken: st
             return parseInt(timestamp) > twoWeeksAgo;
         });
 
+        console.log(`${recentMessageIds.length} messages are eligible for bulk delete`);
+
         if (recentMessageIds.length > 0) {
-            // Discord's bulk delete can only handle up to 100 messages at a time
-            for (let i = 0; i < recentMessageIds.length; i += 100) {
-                const batch = recentMessageIds.slice(i, i + 100);
-                try {
+            try {
+                // Discord's bulk delete can only handle up to 100 messages at a time
+                for (let i = 0; i < recentMessageIds.length; i += 100) {
+                    const batch = recentMessageIds.slice(i, i + 100);
                     await bulkDeleteMessages(channelId, batch, botToken);
-                } catch (error: unknown) {
-                    console.error(`Error bulk deleting messages: ${(error as Error).message}`);
-                    // If bulk delete fails, fall back to individual deletes
-                    for (const id of batch) {
-                        try {
-                            await callDiscordAPI('DELETE', `/channels/${channelId}/messages/${id}`, botToken);
-                        } catch (deleteError: unknown) {
-                            console.error(`Error deleting message ${id}: ${(deleteError as Error).message}`);
-                        }
+                    console.log(`Successfully bulk deleted ${batch.length} messages`);
+                }
+            } catch (bulkDeleteError) {
+                console.error('Bulk delete failed:', bulkDeleteError);
+                console.log('Falling back to individual message deletion');
+
+                // Fallback to individual message deletion
+                for (const id of recentMessageIds) {
+                    try {
+                        await deleteMessage(channelId, id, botToken);
+                        console.log(`Successfully deleted message ${id}`);
+                    } catch (deleteError) {
+                        console.error(`Failed to delete message ${id}:`, deleteError);
                     }
                 }
             }
         }
 
-        // For older messages, delete them one by one
+        // For older messages, we can't delete them, so we'll just log a warning
         const oldMessageIds = messageIdsToDelete.filter(id => !recentMessageIds.includes(id));
-        for (const id of oldMessageIds) {
-            try {
-                await callDiscordAPI('DELETE', `/channels/${channelId}/messages/${id}`, botToken);
-            } catch (deleteError: unknown) {
-                console.error(`Error deleting message ${id}: ${(deleteError as Error).message}`);
-            }
+        if (oldMessageIds.length > 0) {
+            console.warn(`Unable to delete ${oldMessageIds.length} messages older than 14 days.`);
         }
 
-        console.log(`File ${fileId} deleted successfully`);
+        console.log(`File ${fileId} deletion process completed. ${recentMessageIds.length} messages processed, ${oldMessageIds.length} messages skipped.`);
     } catch (error: unknown) {
         console.error('Error deleting file:', error);
         throw error;

@@ -57,3 +57,27 @@
     @apply bg-background text-foreground;
   }
 }
+
+:root {
+  --color-primary: #3490dc;
+  --color-primary-dark: #2779bd;
+  --color-primary-light: #ebf8ff;
+  --color-primary-foreground: #ffffff;
+  --color-background: #ffffff;
+  --color-text: #2d3748;
+  --color-warning: #f6993f;
+  --color-warning-light: #fff5eb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: #4299e1;
+    --color-primary-dark: #3182ce;
+    --color-primary-light: #2a4365;
+    --color-primary-foreground: #ffffff;
+    --color-background: #1a202c;
+    --color-text: #e2e8f0;
+    --color-warning: #ed8936;
+    --color-warning-light: #44337a;
+  }
+}
