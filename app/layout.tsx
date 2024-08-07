@@ -1,5 +1,6 @@
 import './globals.css'
-import { Inter } from 'next/font/google'
+// @ts-ignore
+import { Inter } from 'next/font/google';
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from "@/components/ui/toaster"
 

@@ -1,3 +1,4 @@
+// @ts-ignore
 import { NextRequest, NextResponse } from 'next/server';
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
