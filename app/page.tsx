@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
-import { uploadFile, listFiles, downloadFile, deleteFile } from '@/lib/discord-storage';
+import React, { useState, useEffect, useCallback } from 'react';
+import { uploadFile, listFiles, deleteFile, generateShareCode, downloadFromCode, fetchAllMessages, downloadFileFromUrls } from '@/lib/discord-storage';
 import FileUploader from '@/components/FileUploader';
 import FileList from '@/components/FileList';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -21,15 +21,17 @@ interface StoredFile {
 export default function Home() {
   const [botToken, setBotToken] = useState('');
   const [channelId, setChannelId] = useState('');
+  const [encryptionKey, setEncryptionKey] = useState('');
   const [files, setFiles] = useState<StoredFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [shareCode, setShareCode] = useState('');
   const { toast } = useToast();
 
   const fetchFiles = useCallback(async (token = botToken, channel = channelId) => {
     if (!token || !channel) return;
-    
+
     try {
       setLoading(true);
       const fetchedFiles = await listFiles(channel, token);
@@ -49,9 +51,11 @@ export default function Home() {
   useEffect(() => {
     const savedBotToken = localStorage.getItem('discordBotToken');
     const savedChannelId = localStorage.getItem('discordChannelId');
-    
+    const savedEncryptionKey = localStorage.getItem('encryptionKey');
+
     if (savedBotToken) setBotToken(savedBotToken);
     if (savedChannelId) setChannelId(savedChannelId);
+    if (savedEncryptionKey) setEncryptionKey(savedEncryptionKey);
   }, []);
 
   useEffect(() => {
@@ -64,7 +68,7 @@ export default function Home() {
     try {
       setLoading(true);
       setUploadProgress(0);
-      await uploadFile(file, channelId, botToken, (progress) => {
+      await uploadFile(file, channelId, botToken, encryptionKey, (progress) => {
         setUploadProgress(progress);
       });
       await fetchFiles();
@@ -83,13 +87,17 @@ export default function Home() {
       setLoading(false);
       setUploadProgress(0);
     }
-  }, [botToken, channelId, fetchFiles, toast]);
+  }, [botToken, channelId, encryptionKey, fetchFiles, toast]);
 
   const handleDownload = useCallback(async (fileId: string, fileName: string) => {
     try {
       setLoading(true);
       setDownloadProgress(0);
-      const blob = await downloadFile(fileId, channelId, botToken, (progress) => {
+      const messages = await fetchAllMessages(channelId, botToken);
+      const chunkMessages = messages.filter(msg => msg.attachments && msg.attachments.some((att: any) => att.filename.startsWith(`${fileId}_chunk_`)));
+      const chunkUrls = chunkMessages.map(msg => msg.attachments[0].url);
+
+      const blob = await downloadFileFromUrls(chunkUrls, encryptionKey, botToken, (progress) => {
         setDownloadProgress(progress);
       });
 
@@ -118,7 +126,7 @@ export default function Home() {
       setLoading(false);
       setDownloadProgress(0);
     }
-  }, [botToken, channelId, toast]);
+  }, [botToken, channelId, encryptionKey, toast]);
 
   const handleDelete = useCallback(async (fileId: string) => {
     try {
@@ -141,11 +149,83 @@ export default function Home() {
     }
   }, [botToken, channelId, fetchFiles, toast]);
 
+  const handleGenerateShareCode = useCallback(async (fileId: string) => {
+    try {
+      const file = files.find(f => f.id === fileId);
+      if (!file) {
+        throw new Error('File not found');
+      }
+
+      const messages = await fetchAllMessages(channelId, botToken);
+      const chunkMessages = messages.filter(msg => msg.attachments && msg.attachments.some((att: any) => att.filename.startsWith(`${fileId}_chunk_`)));
+      const chunkUrls = chunkMessages.map(msg => msg.attachments[0].url);
+
+      const code = await generateShareCode(encryptionKey, chunkUrls, file.name);
+      setShareCode(code);
+      toast({
+        title: 'Success',
+        description: `Share code generated: ${code}`,
+      });
+    } catch (err) {
+      console.error('Error generating share code:', err);
+      toast({
+        title: 'Error',
+        description: `Failed to generate share code: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'destructive',
+      });
+    }
+  }, [channelId, encryptionKey, botToken, files, toast]);
+
+  const handleDownloadFromCode = useCallback(async () => {
+    try {
+      if (!shareCode || !botToken) {
+        toast({
+          title: 'Error',
+          description: 'Share code and bot token are required.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      setLoading(true);
+      setDownloadProgress(0);
+      const { blob, fileName } = await downloadFromCode(shareCode, botToken, (progress) => {
+        setDownloadProgress(progress);
+      });
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: 'Success',
+        description: 'File downloaded successfully from share code.',
+      });
+    } catch (err) {
+      console.error('Error downloading file from share code:', err);
+      toast({
+        title: 'Error',
+        description: `Failed to download file from share code: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+      setDownloadProgress(0);
+    }
+  }, [shareCode, botToken, toast]);
+
   const handleCredentialsSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     localStorage.setItem('discordBotToken', botToken);
     localStorage.setItem('discordChannelId', channelId);
-  }, [botToken, channelId]);
+    localStorage.setItem('encryptionKey', encryptionKey);
+  }, [botToken, channelId, encryptionKey]);
 
   return (
     <main className="container mx-auto px-4 py-8">
@@ -156,7 +236,7 @@ export default function Home() {
         </div>
 
         <form onSubmit={handleCredentialsSubmit} className="mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <Input
               type="password"
               placeholder="Bot Token"
@@ -171,12 +251,19 @@ export default function Home() {
               onChange={(e) => setChannelId(e.target.value)}
               className="w-full"
             />
+            <Input
+              type="password"
+              placeholder="Encryption Key"
+              value={encryptionKey}
+              onChange={(e) => setEncryptionKey(e.target.value)}
+              className="w-full"
+            />
             <Button type="submit" className="w-full">Set Credentials</Button>
           </div>
         </form>
 
         <div className="mb-6">
-          <FileUploader onUpload={handleUpload} disabled={loading || !botToken || !channelId} />
+          <FileUploader onUpload={handleUpload} disabled={loading || !botToken || !channelId || !encryptionKey} />
           {uploadProgress > 0 && (
             <div className="mt-2">
               <Progress value={uploadProgress} className="w-full" />
@@ -186,11 +273,12 @@ export default function Home() {
         </div>
 
         <div>
-          <FileList 
-            files={files} 
+          <FileList
+            files={files}
             onDownload={handleDownload}
             onDelete={handleDelete}
-            loading={loading} 
+            onGenerateShareCode={handleGenerateShareCode}
+            loading={loading}
           />
           {downloadProgress > 0 && (
             <div className="mt-2">
@@ -198,6 +286,18 @@ export default function Home() {
               <p className="text-sm text-center mt-1">{downloadProgress.toFixed(2)}% Downloaded</p>
             </div>
           )}
+        </div>
+        <div className="mt-6">
+          <Input
+            type="text"
+            placeholder="Enter share code to download"
+            value={shareCode}
+            onChange={(e) => setShareCode(e.target.value)}
+            className="w-full mb-2"
+          />
+          <Button onClick={handleDownloadFromCode} className="w-full" disabled={!shareCode}>
+            Download from Share Code
+          </Button>
         </div>
       </div>
     </main>

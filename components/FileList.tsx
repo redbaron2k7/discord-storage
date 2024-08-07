@@ -1,4 +1,4 @@
-import { Download, Trash2 } from 'lucide-react'
+import { Download, Trash2, Share2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { useState } from 'react'
@@ -15,10 +15,11 @@ interface FileListProps {
   files: File[];
   onDownload: (fileId: string, fileName: string) => void;
   onDelete: (fileId: string) => void;
+  onGenerateShareCode: (fileId: string) => void;
   loading: boolean;
 }
 
-export default function FileList({ files, onDownload, onDelete, loading }: FileListProps) {
+export default function FileList({ files, onDownload, onDelete, onGenerateShareCode, loading }: FileListProps) {
   const [deleteConfirmation, setDeleteConfirmation] = useState<{ fileId: string, fileName: string } | null>(null);
   const [deleteTimeout] = useState<NodeJS.Timeout | null>(null);
 
@@ -74,6 +75,10 @@ export default function FileList({ files, onDownload, onDelete, loading }: FileL
                   <Button onClick={() => onDownload(file.id, file.name)} variant="ghost" size="sm" className="mr-2">
                     <Download className="w-4 h-4 mr-2" />
                     Download
+                  </Button>
+                  <Button onClick={() => onGenerateShareCode(file.id)} variant="ghost" size="sm" className="mr-2">
+                    <Share2 className="w-4 h-4 mr-2" />
+                    Share
                   </Button>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
