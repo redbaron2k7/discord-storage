@@ -178,10 +178,10 @@ export default function Home() {
 
   const handleDownloadFromCode = useCallback(async () => {
     try {
-      if (!shareCode || !botToken) {
+      if (!shareCode) {
         toast({
           title: 'Error',
-          description: 'Share code and bot token are required.',
+          description: 'Share code is required.',
           variant: 'destructive',
         });
         return;
