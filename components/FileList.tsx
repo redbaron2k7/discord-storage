@@ -86,7 +86,7 @@ export default function FileList({ files, onDownload, onDelete, loading }: FileL
                       <AlertDialogHeader>
                         <AlertDialogTitle>Are you sure you want to delete this file?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This action cannot be undone. This will permanently delete the file "{deleteConfirmation?.fileName}".
+                          This action cannot be undone. This will permanently delete the file &quot;{deleteConfirmation?.fileName}&quot;.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
