@@ -31,12 +31,12 @@ export function HelpButton() {
               <p className="text-lg mb-4">Follow these steps to store and manage your files securely:</p>
               <ol className="steps-list">
                 <li>Enter your Discord bot token, channel ID, and encryption key in the provided fields.</li>
-                <li>Click "Set Credentials" to save your information.</li>
+                <li>Click &quot;Set Credentials&quot; to save your information.</li>
                 <li>Use the file uploader to select and upload files.</li>
                 <li>View your uploaded files in the file list below.</li>
                 <li>Download files by clicking the download button next to each file.</li>
                 <li>Generate share codes for files you want to share with others.</li>
-                <li>Use the "Download from Share Code" feature to download shared files.</li>
+                <li>Use the &quot;Download from Share Code&quot; feature to download shared files.</li>
               </ol>
               <div className="info-box primary">
                 <h3>Quick Access</h3>
