@@ -2,12 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 
-export const config = {
-    api: {
-        bodyParser: false,
-    },
-};
-
 async function handleDiscordRequest(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const endpoint = searchParams.get('endpoint');
