@@ -55,7 +55,7 @@ async function callDiscordAPI(method: 'GET' | 'POST' | 'DELETE', endpoint: strin
     }
 }
 
-const CHUNK_SIZE = 18 * 1024 * 1024;
+const CHUNK_SIZE = 25 * 1024 * 1024;
 
 // upload file
 export async function uploadFile(file: File, channelId: string, botToken: string, encryptionKey: string, onProgress?: (progress: number) => void): Promise<void> {
@@ -72,60 +72,64 @@ export async function uploadFile(file: File, channelId: string, botToken: string
 
         console.log('Uploading metadata:', metadata);
 
-        // metadata
         await callDiscordAPI('POST', `/channels/${channelId}/messages`, botToken, {
             content: `metadata:${JSON.stringify(metadata)}`
         });
 
-        let offset = 0;
-        let chunkIndex = 0;
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const fileContent = await readFileAsArrayBuffer(file);
+        console.log(`File read as ArrayBuffer, byteLength: ${fileContent.byteLength}`);
 
-        while (offset < file.size) {
-            const chunk = file.slice(offset, offset + CHUNK_SIZE);
-            console.log(`Processing chunk ${chunkIndex}, size: ${chunk.size} bytes`);
+        const wordArray = CryptoJS.lib.WordArray.create(new Uint8Array(fileContent));
+        const encryptedFile = CryptoJS.AES.encrypt(wordArray, encryptionKey);
+        const encryptedString = encryptedFile.toString();
+        console.log(`File encrypted, length: ${encryptedString.length}`);
 
-            const chunkContent = await readChunkAsArrayBuffer(chunk);
-            console.log(`Chunk ${chunkIndex} read as ArrayBuffer, byteLength: ${chunkContent.byteLength}`);
+        const chunks = splitString(encryptedString, CHUNK_SIZE);
+        const totalChunks = chunks.length;
+        console.log(`File split into ${totalChunks} chunks`);
 
-            const wordArray = CryptoJS.lib.WordArray.create(new Uint8Array(chunkContent));
-            const encryptedChunk = CryptoJS.AES.encrypt(wordArray, encryptionKey);
-            const encryptedString = encryptedChunk.toString();
-            console.log(`Chunk ${chunkIndex} encrypted, length: ${encryptedString.length}`);
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const chunk = chunks[chunkIndex];
+            console.log(`Processing chunk ${chunkIndex}, size: ${chunk.length} bytes`);
 
             const formData = new FormData();
-            formData.append('file', new Blob([encryptedString], { type: 'text/plain' }), `${fileId}_chunk_${chunkIndex}`);
+            formData.append('file', new Blob([chunk], { type: 'text/plain' }), `${fileId}_chunk_${chunkIndex}`);
             formData.append('content', `Chunk ${chunkIndex + 1} of ${totalChunks}`);
 
             await callDiscordAPI('POST', `/channels/${channelId}/messages`, botToken, formData, true);
             console.log(`Chunk ${chunkIndex} uploaded`);
 
-            offset += CHUNK_SIZE;
-            chunkIndex++;
-
             if (onProgress) {
-                onProgress((chunkIndex / totalChunks) * 100);
+                onProgress(((chunkIndex + 1) / totalChunks) * 100);
             }
         }
 
-        console.log(`File uploaded successfully. Total chunks: ${chunkIndex}`);
+        console.log(`File uploaded successfully. Total chunks: ${totalChunks}`);
     } catch (error) {
         console.error('Error uploading file:', error);
         throw error;
     }
 }
 
-function readChunkAsArrayBuffer(chunk: Blob): Promise<ArrayBuffer> {
+function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (event) => {
             const result = event.target?.result as ArrayBuffer;
-            console.log(`Chunk read, result byteLength: ${result.byteLength}`);
+            console.log(`File read, result byteLength: ${result.byteLength}`);
             resolve(result);
         };
         reader.onerror = (error) => reject(error);
-        reader.readAsArrayBuffer(chunk);
+        reader.readAsArrayBuffer(file);
     });
+}
+
+function splitString(str: string, chunkSize: number): string[] {
+    const chunks = [];
+    for (let i = 0; i < str.length; i += chunkSize) {
+        chunks.push(str.slice(i, i + chunkSize));
+    }
+    return chunks;
 }
 
 function generateUniqueId(): string {
@@ -248,14 +252,14 @@ export async function downloadFileFromUrls(chunkUrls: string[], encryptionKey: s
     console.log('Starting downloadFileFromUrls', { chunkCount: chunkUrls.length, botTokenProvided: !!botToken });
 
     const totalChunks = chunkUrls.length;
-    const chunks: ArrayBuffer[] = [];
+    let encryptedContent = '';
 
     for (let index = 0; index < totalChunks; index++) {
         const url = chunkUrls[index];
         console.log(`Processing chunk ${index + 1}/${totalChunks}`, { url });
 
         try {
-            const encryptedChunk = await new Promise<string>((resolve, reject) => {
+            const chunk = await new Promise<string>((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
                 xhr.open('GET', `/api/discord?endpoint=/fetchFile&url=${encodeURIComponent(url)}`, true);
                 xhr.responseType = 'text';
@@ -279,12 +283,7 @@ export async function downloadFileFromUrls(chunkUrls: string[], encryptionKey: s
                 xhr.send();
             });
 
-            console.log(`Decrypting chunk ${index + 1}`);
-            const decryptedWordArray = CryptoJS.AES.decrypt(encryptedChunk, encryptionKey);
-
-            const decryptedChunk = wordArrayToArrayBuffer(decryptedWordArray);
-            console.log(`Chunk ${index + 1} decrypted`, { size: decryptedChunk.byteLength });
-            chunks.push(decryptedChunk);
+            encryptedContent += chunk;
 
             if (onProgress) {
                 const progress = ((index + 1) / totalChunks) * 100;
@@ -297,11 +296,12 @@ export async function downloadFileFromUrls(chunkUrls: string[], encryptionKey: s
         }
     }
 
-    console.log('All chunks processed, combining');
-    const combinedArrayBuffer = concatenateArrayBuffers(chunks);
-    console.log(`Combined array buffer created`, { size: combinedArrayBuffer.byteLength });
+    console.log('All chunks combined, decrypting');
+    const decryptedWordArray = CryptoJS.AES.decrypt(encryptedContent, encryptionKey);
+    const decryptedArrayBuffer = wordArrayToArrayBuffer(decryptedWordArray);
+    console.log(`File decrypted`, { size: decryptedArrayBuffer.byteLength });
 
-    return new Blob([combinedArrayBuffer], { type: 'application/octet-stream' });
+    return new Blob([decryptedArrayBuffer], { type: 'application/octet-stream' });
 }
 
 export async function generateShareCode(encryptionKey: string, chunkUrls: string[], fileName: string): Promise<string> {
