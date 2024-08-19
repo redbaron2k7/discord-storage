@@ -55,6 +55,7 @@ async function callDiscordAPI(method: 'GET' | 'POST' | 'DELETE', endpoint: strin
     }
 }
 
+const ENCRYPTION_CHUNK_SIZE = 5 * 1024 * 1024;
 const CHUNK_SIZE = 25 * 1024 * 1024;
 
 // upload file
@@ -76,60 +77,57 @@ export async function uploadFile(file: File, channelId: string, botToken: string
             content: `metadata:${JSON.stringify(metadata)}`
         });
 
-        const fileContent = await readFileAsArrayBuffer(file);
-        console.log(`File read as ArrayBuffer, byteLength: ${fileContent.byteLength}`);
+        const iv = CryptoJS.lib.WordArray.create(new Uint8Array(16));
+        const key = CryptoJS.enc.Utf8.parse(encryptionKey);
+        
+        let encryptedContent = iv.toString();
+        let fileOffset = 0;
+        let uploadChunk = '';
+        let uploadChunkIndex = 0;
+        const totalSize = file.size;
 
-        const wordArray = CryptoJS.lib.WordArray.create(new Uint8Array(fileContent));
-        const encryptedFile = CryptoJS.AES.encrypt(wordArray, encryptionKey);
-        const encryptedString = encryptedFile.toString();
-        console.log(`File encrypted, length: ${encryptedString.length}`);
+        while (fileOffset < totalSize) {
+            const chunk = await readChunk(file, fileOffset, ENCRYPTION_CHUNK_SIZE);
+            fileOffset += chunk.byteLength;
 
-        const chunks = splitString(encryptedString, CHUNK_SIZE);
-        const totalChunks = chunks.length;
-        console.log(`File split into ${totalChunks} chunks`);
+            const wordArray = CryptoJS.lib.WordArray.create(chunk);
+            const encryptedChunk = CryptoJS.AES.encrypt(wordArray, key, { iv: iv }).toString();
 
-        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-            const chunk = chunks[chunkIndex];
-            console.log(`Processing chunk ${chunkIndex}, size: ${chunk.length} bytes`);
+            encryptedContent += encryptedChunk;
 
-            const formData = new FormData();
-            formData.append('file', new Blob([chunk], { type: 'text/plain' }), `${fileId}_chunk_${chunkIndex}`);
-            formData.append('content', `Chunk ${chunkIndex + 1} of ${totalChunks}`);
+            if (encryptedContent.length >= CHUNK_SIZE || fileOffset === totalSize) {
+                uploadChunk = encryptedContent.slice(0, CHUNK_SIZE);
+                encryptedContent = encryptedContent.slice(CHUNK_SIZE);
 
-            await callDiscordAPI('POST', `/channels/${channelId}/messages`, botToken, formData, true);
-            console.log(`Chunk ${chunkIndex} uploaded`);
+                const formData = new FormData();
+                formData.append('file', new Blob([uploadChunk], { type: 'text/plain' }), `${fileId}_chunk_${uploadChunkIndex}`);
+                formData.append('content', `Chunk ${uploadChunkIndex + 1}`);
+
+                await callDiscordAPI('POST', `/channels/${channelId}/messages`, botToken, formData, true);
+                console.log(`Chunk ${uploadChunkIndex} uploaded`);
+
+                uploadChunkIndex++;
+            }
 
             if (onProgress) {
-                onProgress(((chunkIndex + 1) / totalChunks) * 100);
+                onProgress((fileOffset / totalSize) * 100);
             }
         }
 
-        console.log(`File uploaded successfully. Total chunks: ${totalChunks}`);
+        if (encryptedContent.length > 0) {
+            const formData = new FormData();
+            formData.append('file', new Blob([encryptedContent], { type: 'text/plain' }), `${fileId}_chunk_${uploadChunkIndex}`);
+            formData.append('content', `Chunk ${uploadChunkIndex + 1}`);
+
+            await callDiscordAPI('POST', `/channels/${channelId}/messages`, botToken, formData, true);
+            console.log(`Final chunk ${uploadChunkIndex} uploaded`);
+        }
+
+        console.log(`File uploaded successfully. Total chunks: ${uploadChunkIndex + 1}`);
     } catch (error) {
         console.error('Error uploading file:', error);
         throw error;
     }
-}
-
-function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const result = event.target?.result as ArrayBuffer;
-            console.log(`File read, result byteLength: ${result.byteLength}`);
-            resolve(result);
-        };
-        reader.onerror = (error) => reject(error);
-        reader.readAsArrayBuffer(file);
-    });
-}
-
-function splitString(str: string, chunkSize: number): string[] {
-    const chunks = [];
-    for (let i = 0; i < str.length; i += chunkSize) {
-        chunks.push(str.slice(i, i + chunkSize));
-    }
-    return chunks;
 }
 
 function generateUniqueId(): string {
@@ -248,6 +246,15 @@ export async function listFiles(channelId: string, botToken: string): Promise<an
     }
 }
 
+async function readChunk(file: File, offset: number, length: number): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as ArrayBuffer);
+        reader.onerror = (e) => reject(e);
+        reader.readAsArrayBuffer(file.slice(offset, offset + length));
+    });
+}
+
 export async function downloadFileFromUrls(chunkUrls: string[], encryptionKey: string, botToken: string, onProgress?: (progress: number) => void): Promise<Blob> {
     console.log('Starting downloadFileFromUrls', { chunkCount: chunkUrls.length, botTokenProvided: !!botToken });
 
@@ -259,30 +266,7 @@ export async function downloadFileFromUrls(chunkUrls: string[], encryptionKey: s
         console.log(`Processing chunk ${index + 1}/${totalChunks}`, { url });
 
         try {
-            const chunk = await new Promise<string>((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.open('GET', `/api/discord?endpoint=/fetchFile&url=${encodeURIComponent(url)}`, true);
-                xhr.responseType = 'text';
-                xhr.setRequestHeader('X-Discord-Bot-Token', botToken);
-
-                xhr.onload = function () {
-                    if (this.status >= 200 && this.status < 300) {
-                        console.log(`Chunk ${index + 1} downloaded successfully`, { size: this.responseText.length });
-                        resolve(this.responseText);
-                    } else {
-                        console.error(`Error downloading chunk ${index + 1}`, { status: this.status, statusText: this.statusText });
-                        reject(new Error(`HTTP error! status: ${this.status}`));
-                    }
-                };
-
-                xhr.onerror = function () {
-                    console.error(`Network error occurred for chunk ${index + 1}`);
-                    reject(new Error('Network error occurred'));
-                };
-
-                xhr.send();
-            });
-
+            const chunk = await fetchChunk(url, botToken);
             encryptedContent += chunk;
 
             if (onProgress) {
@@ -297,11 +281,42 @@ export async function downloadFileFromUrls(chunkUrls: string[], encryptionKey: s
     }
 
     console.log('All chunks combined, decrypting');
-    const decryptedWordArray = CryptoJS.AES.decrypt(encryptedContent, encryptionKey);
-    const decryptedArrayBuffer = wordArrayToArrayBuffer(decryptedWordArray);
+    const iv = CryptoJS.enc.Hex.parse(encryptedContent.slice(0, 32));
+    const ciphertext = encryptedContent.slice(32);
+
+    const key = CryptoJS.enc.Utf8.parse(encryptionKey);
+    const decrypted = CryptoJS.AES.decrypt(ciphertext, key, { iv: iv });
+
+    const decryptedArrayBuffer = wordArrayToArrayBuffer(decrypted);
     console.log(`File decrypted`, { size: decryptedArrayBuffer.byteLength });
 
     return new Blob([decryptedArrayBuffer], { type: 'application/octet-stream' });
+}
+
+async function fetchChunk(url: string, botToken: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', `/api/discord?endpoint=/fetchFile&url=${encodeURIComponent(url)}`, true);
+        xhr.responseType = 'text';
+        xhr.setRequestHeader('X-Discord-Bot-Token', botToken);
+
+        xhr.onload = function () {
+            if (this.status >= 200 && this.status < 300) {
+                console.log(`Chunk downloaded successfully`, { size: this.responseText.length });
+                resolve(this.responseText);
+            } else {
+                console.error(`Error downloading chunk`, { status: this.status, statusText: this.statusText });
+                reject(new Error(`HTTP error! status: ${this.status}`));
+            }
+        };
+
+        xhr.onerror = function () {
+            console.error(`Network error occurred`);
+            reject(new Error('Network error occurred'));
+        };
+
+        xhr.send();
+    });
 }
 
 export async function generateShareCode(encryptionKey: string, chunkUrls: string[], fileName: string): Promise<string> {
@@ -351,22 +366,9 @@ export async function downloadFromCode(shareCode: string, botToken: string, onPr
 function wordArrayToArrayBuffer(wordArray: CryptoJS.lib.WordArray): ArrayBuffer {
     const words = (wordArray as any).words;
     const sigBytes = (wordArray as any).sigBytes;
-
-    const u8Array = new Uint8Array(sigBytes);
+    const u8 = new Uint8Array(sigBytes);
     for (let i = 0; i < sigBytes; i++) {
-        u8Array[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+        u8[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
     }
-
-    return u8Array.buffer;
-}
-
-function concatenateArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
-    const totalLength = buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const buffer of buffers) {
-        result.set(new Uint8Array(buffer), offset);
-        offset += buffer.byteLength;
-    }
-    return result.buffer;
+    return u8.buffer;
 }
